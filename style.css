@@ -1,1 +1,42 @@
-
+:root {
+  --marca: #77b6d4;
+  --sobre-marca: #111;
+  --fondo: #f7f7f7;
+  --texto: #202024;
+  --ancho: 700px;
+  color-scheme: light;
+}
+* { box-sizing: border-box; }
+html { scroll-behavior: auto; }
+body { margin: 0; background: var(--fondo); color: var(--texto); font: 16px/1.45 system-ui, -apple-system, "Segoe UI", sans-serif; padding-bottom: 95px; }
+a { color: inherit; }
+button { font: inherit; cursor: pointer; }
+.oculto { display: none !important; }
+.encabezado { background: #fff; text-align: center; padding: 13px 14px 12px; border-bottom: 3px solid var(--marca); }
+.marca { display: inline-flex; max-width: 95%; gap: 8px; flex-direction: column; align-items: center; text-decoration: none; font-size: 23px; font-weight: 800; }
+.logo { max-width: min(76vw, 260px); width: auto; height: auto; max-height: 108px; object-fit: contain; }
+.lema { margin: 3px 0 0; font-size: 13px; color: #666; }
+.contenido { max-width: var(--ancho); margin: 0 auto; padding: 0 10px; }
+.estado { padding: 50px 18px; text-align: center; color: #666; }
+.error { background: #fff4f1; border: 1px solid #f0c7c0; padding: 18px; margin: 18px auto; border-radius: 12px; max-width: var(--ancho); overflow-wrap: anywhere; }
+.intro { text-align: center; margin: 22px 0 16px; }
+.intro h1 { margin: 0; font-size: 24px; }
+.intro p { margin: 6px 0 0; color: #666; font-size: 14px; }
+.categorias { display: flex; gap: 8px; padding: 13px 10px; overflow-x: auto; overscroll-behavior-x: contain; scrollbar-width: thin; background: #fff; border-bottom: 1px solid #eee; }
+.categorias button { flex: 0 0 auto; border: 1px solid #dedede; background: white; padding: 10px 16px; border-radius: 100px; font-size: 14px; font-weight: 650; }
+.categorias button[aria-current="true"] { background: var(--marca); color: var(--sobre-marca); border-color: var(--marca); }
+.producto { margin: 15px auto 22px; max-width: var(--ancho); background: #fff; padding: 16px 10px 22px; text-align: center; border-radius: 7px; content-visibility: auto; contain-intrinsic-size: auto 640px; }
+.nombre { margin: 0 4px 14px; font-size: clamp(19px, 5vw, 26px); font-weight: 750; overflow-wrap: anywhere; }
+.foto { display: block; width: 100%; height: auto; max-height: 85svh; object-fit: contain; margin: auto; background: #fafafa; }
+.sin-foto { display: grid; min-height: 180px; place-items: center; color: #777; background: #f6f6f6; }
+.precio { font-size: clamp(25px, 6vw, 33px); font-weight: 800; margin: 15px 0 0; }
+.precio-anterior { color: #777; font-size: 19px; text-decoration: line-through; margin: 14px 0 2px; }
+.precio-oferta { margin-top: 0; color: #b52845; }
+.lista-clientes { display: grid; gap: 11px; max-width: var(--ancho); padding: 16px; margin: auto; }
+.cliente { background: #fff; border-radius: 11px; padding: 20px; font-size: 18px; font-weight: 700; text-decoration: none; border: 1px solid #eee; }
+.navegacion { position: fixed; bottom: 0; bottom: env(safe-area-inset-bottom, 0px); left: 0; right: 0; z-index: 10; display: flex; align-items: center; justify-content: space-between; gap: 9px; padding: 11px max(12px, env(safe-area-inset-left)) 11px max(12px, env(safe-area-inset-right)); background: rgba(255,255,255,.97); border-top: 1px solid #e2e2e2; box-shadow: 0 -3px 16px #00000010; }
+.navegacion button { border: 0; border-radius: 10px; background: var(--marca); color: var(--sobre-marca); font-weight: 750; min-height: 44px; padding: 10px 13px; }
+.navegacion button:disabled { background: #e9e9e9; color: #888; cursor: default; }
+.contador { font-size: 14px; font-weight: 750; white-space: nowrap; }
+@media (min-width: 720px) { .producto { padding: 24px; } .categorias { justify-content: center; flex-wrap: wrap; } .navegacion { justify-content: center; gap: 32px; } }
+@media (prefers-reduced-motion: reduce) { *, *::before, *::after { scroll-behavior: auto !important; } }

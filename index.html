@@ -1,1 +1,29 @@
-
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#ffffff">
+  <meta name="description" content="Catálogos digitales REVISTA">
+  <title>REVISTA · Catálogos</title>
+  <link rel="stylesheet" href="/style.css">
+  <script src="/engine.js" defer></script>
+</head>
+<body>
+  <header class="encabezado">
+    <a class="marca" href="/" id="marca" aria-label="Volver al inicio">
+      <img id="logo" class="logo oculto" alt="Logo" width="160" height="70">
+      <span id="tituloMarca">REVISTA</span>
+    </a>
+    <p class="lema" id="lema">Catálogos digitales</p>
+  </header>
+  <main id="principal" aria-live="polite">
+    <p class="estado">Cargando catálogo…</p>
+  </main>
+  <nav id="navegacion" class="navegacion oculto" aria-label="Navegación de páginas">
+    <button id="anterior" type="button">← Anterior</button>
+    <span id="contador" class="contador">1 / 1</span>
+    <button id="siguiente" type="button">Siguiente →</button>
+  </nav>
+</body>
+</html>
