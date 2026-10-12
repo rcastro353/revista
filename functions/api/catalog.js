@@ -141,10 +141,20 @@ export async function onRequestGet({ request }) {
     const cliente = clientes.find(c => normalizar(elegir(c, 'slug')) === slug);
     if (!cliente) return json({ error: 'Catálogo no encontrado o desactivado.' }, 404);
 
-    const [csv, csvConfig] = await Promise.all([
-      obtenerCSV(elegir(cliente, 'catalogocsv'), request),
-      obtenerCSV(elegir(cliente, 'confcsv', 'configuracioncsv'), request)
-    ]);
+
+    
+const [csv, csvConfig] = await Promise.all([
+  obtenerCSV(elegir(cliente, 'catalogocsv'), request)
+    .catch(e => {
+      throw new Error("CATÁLOGO: " + e.message);
+    }),
+
+  obtenerCSV(elegir(cliente, 'confcsv', 'configuracioncsv'), request)
+    .catch(e => {
+      throw new Error("CONFIGURACIÓN: " + e.message);
+    })
+]);
+
     const conf = configuracion(csvFilas(csvConfig));
     const catalogo = csvObjetos(csv).filter(p => elegir(p, 'Nombre del Producto') && elegir(p, 'Categoría'));
     const categorias = [...new Set(catalogo.map(p => elegir(p, 'Categoría')))]
