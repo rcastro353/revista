@@ -167,16 +167,26 @@ export async function onRequestGet({ request }) {
       }
     }
     const categorias = [...mapaCategorias.values()].sort((a, b) => a.localeCompare(b, 'es'));
-    const hayOfertas = catalogo.some(p => si(elegir(p, 'Promoción')) && precioExiste(elegir(p, 'Precio Descuento')));
+    // PROMOCIONES no depende de la columna Categoría: es una sección independiente.
+    // El acceso permanece visible aun cuando todavía no haya productos en descuento.
+    const ETIQUETA_PROMOCIONES = '🔥 Promociones';
+    const esPromocion = producto => si(elegir(producto, 'Promoción')) &&
+      precioExiste(elegir(producto, 'Precio Descuento'));
+    const esPestanaPromociones = valor => {
+      const clave = normalizar(valor).replace(/^🔥\s*/, '');
+      return clave === 'promociones' || clave === 'ofertas';
+    };
+    // No confundir una categoría de AppSheet llamada "Promociones" con la sección especial.
+    const categoriasVisibles = categorias.filter(c => !esPestanaPromociones(c));
 
-    let categoria = params.get('categoria') || (hayOfertas ? 'ofertas' : categorias[0] || '');
+    let categoria = params.get('categoria') || categoriasVisibles[0] || ETIQUETA_PROMOCIONES;
     let filtrados;
-    if (normalizar(categoria) === 'ofertas' && hayOfertas) {
-      categoria = 'Ofertas';
-      filtrados = catalogo.filter(p => si(elegir(p, 'Promoción')) && precioExiste(elegir(p, 'Precio Descuento')));
+    if (esPestanaPromociones(categoria)) {
+      categoria = ETIQUETA_PROMOCIONES;
+      filtrados = catalogo.filter(esPromocion);
     } else {
-      const real = categorias.find(c => normalizar(c) === normalizar(categoria));
-      categoria = real || categorias[0] || '';
+      const real = categoriasVisibles.find(c => normalizar(c) === normalizar(categoria));
+      categoria = real || categoriasVisibles[0] || ETIQUETA_PROMOCIONES;
       filtrados = catalogo.filter(p => categoriasProducto(p).some(c => normalizar(c) === normalizar(categoria)));
     }
 
@@ -185,7 +195,7 @@ export async function onRequestGet({ request }) {
     const pagina = Math.min(paginas, Math.max(1, Number.isFinite(num) ? num : 1));
     const productos = filtrados.slice((pagina - 1) * POR_PAGINA, pagina * POR_PAGINA)
       .map(p => {
-        const promocion = si(elegir(p, 'Promoción')) && precioExiste(elegir(p, 'Precio Descuento'));
+        const promocion = esPromocion(p);
         return {
           nombre: elegir(p, 'Nombre del Producto'),
           codigo: elegir(p, 'Código'),
@@ -196,7 +206,7 @@ export async function onRequestGet({ request }) {
       });
     return json({
       cliente: { nombre: elegir(cliente, 'Cliente'), slug: elegir(cliente, 'slug'), ...conf },
-      categorias: [...(hayOfertas ? ['Ofertas'] : []), ...categorias],
+      categorias: [ETIQUETA_PROMOCIONES, ...categoriasVisibles],
       categoria, pagina, paginas, total: filtrados.length, productos
     });
   } catch (error) {
