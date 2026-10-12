@@ -143,26 +143,41 @@ export async function onRequestGet({ request }) {
 
     const [csv, csvConfig] = await Promise.all([
       obtenerCSV(elegir(cliente, 'catalogocsv'), request)
-        .catch(e => { throw new Error('CATÁLOGO: ' + e.message); }),
+        .catch(e => {
+          throw new Error("CATÁLOGO: " + e.message);
+        }),
       obtenerCSV(elegir(cliente, 'confcsv', 'configuracioncsv'), request)
-        .catch(e => { throw new Error('CONFIGURACIÓN: ' + e.message); })
+        .catch(e => {
+          throw new Error("CONFIGURACIÓN: " + e.message);
+        })
     ]);
     const conf = configuracion(csvFilas(csvConfig));
     const catalogo = csvObjetos(csv).filter(p => elegir(p, 'Nombre del Producto') && elegir(p, 'Categoría'));
-    const categorias = [...new Set(catalogo.map(p => elegir(p, 'Categoría')))]
-      .sort((a, b) => a.localeCompare(b, 'es'));
-    // Sección visible siempre; toma productos de cualquier categoría.
-    const esPromocion = p => si(elegir(p, 'Promoción')) && precioExiste(elegir(p, 'Precio Descuento'));
+    // AppSheet EnumList guarda categorías separadas por comas. Sigue aceptando una sola.
+    // Una categoría repetida dentro del mismo producto cuenta solo una vez.
+    function categoriasProducto(producto) {
+      const valores = elegir(producto, 'Categoría').split(',').map(c => c.trim()).filter(Boolean);
+      return [...new Map(valores.map(c => [normalizar(c), c])).values()];
+    }
+    const mapaCategorias = new Map();
+    for (const producto of catalogo) {
+      for (const nombre of categoriasProducto(producto)) {
+        const clave = normalizar(nombre);
+        if (!mapaCategorias.has(clave)) mapaCategorias.set(clave, nombre);
+      }
+    }
+    const categorias = [...mapaCategorias.values()].sort((a, b) => a.localeCompare(b, 'es'));
+    const hayOfertas = catalogo.some(p => si(elegir(p, 'Promoción')) && precioExiste(elegir(p, 'Precio Descuento')));
 
-    let categoria = params.get('categoria') || categorias[0] || 'Promociones';
+    let categoria = params.get('categoria') || (hayOfertas ? 'ofertas' : categorias[0] || '');
     let filtrados;
-    if (['promociones', 'ofertas'].includes(normalizar(categoria))) {
-      categoria = 'Promociones';
-      filtrados = catalogo.filter(esPromocion);
+    if (normalizar(categoria) === 'ofertas' && hayOfertas) {
+      categoria = 'Ofertas';
+      filtrados = catalogo.filter(p => si(elegir(p, 'Promoción')) && precioExiste(elegir(p, 'Precio Descuento')));
     } else {
       const real = categorias.find(c => normalizar(c) === normalizar(categoria));
       categoria = real || categorias[0] || '';
-      filtrados = catalogo.filter(p => elegir(p, 'Categoría') === categoria);
+      filtrados = catalogo.filter(p => categoriasProducto(p).some(c => normalizar(c) === normalizar(categoria)));
     }
 
     const paginas = Math.max(1, Math.ceil(filtrados.length / POR_PAGINA));
@@ -170,7 +185,7 @@ export async function onRequestGet({ request }) {
     const pagina = Math.min(paginas, Math.max(1, Number.isFinite(num) ? num : 1));
     const productos = filtrados.slice((pagina - 1) * POR_PAGINA, pagina * POR_PAGINA)
       .map(p => {
-        const promocion = esPromocion(p);
+        const promocion = si(elegir(p, 'Promoción')) && precioExiste(elegir(p, 'Precio Descuento'));
         return {
           nombre: elegir(p, 'Nombre del Producto'),
           codigo: elegir(p, 'Código'),
@@ -181,7 +196,7 @@ export async function onRequestGet({ request }) {
       });
     return json({
       cliente: { nombre: elegir(cliente, 'Cliente'), slug: elegir(cliente, 'slug'), ...conf },
-      categorias: ['Promociones', ...categorias.filter(c => normalizar(c) !== 'promociones')],
+      categorias: [...(hayOfertas ? ['Ofertas'] : []), ...categorias],
       categoria, pagina, paginas, total: filtrados.length, productos
     });
   } catch (error) {
