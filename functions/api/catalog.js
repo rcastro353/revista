@@ -1,3 +1,4 @@
+// REVISTA - Actualizacion de diagnostico
 // REVISTA - Cloudflare Pages Function
 // El navegador solo consulta /api/catalog. Google Sheets se consulta desde Cloudflare.
 const MASTER_CSV = 'https://docs.google.com/spreadsheets/d/e/2PACX-1vSfUCCUxmO720CspwHwfs5rkQZ-wk4N4AWYt1tCR0W0tWXy_eATreCAALWt0-dr2JZP4YS_Q-QW56EG/pub?gid=0&single=true&output=csv';
