@@ -78,7 +78,7 @@
     const barra = nodo('div', 'categorias');
     barra.setAttribute('aria-label', 'Categorías');
     for (const categoria of datos.categorias) {
-      const b = nodo('button', '', categoria === 'Ofertas' ? '🔥 Ofertas' : categoria);
+      const b = nodo('button', '', categoria === 'Promociones' ? '🔥 Promociones' : categoria);
       b.type = 'button';
       b.setAttribute('aria-current', String(categoria === datos.categoria));
       b.addEventListener('click', () => navegar({ categoria, pagina: 1 }));
@@ -118,7 +118,7 @@
     encabezado.append(nodo('h1', '', datos.categoria || 'Catálogo'));
     encabezado.append(nodo('p', '', `${datos.total} productos · Página ${datos.pagina} de ${datos.paginas}`));
     principal.replaceChildren(categorias(datos), encabezado);
-    if (!datos.productos.length) principal.append(nodo('p', 'estado', 'No hay productos en esta categoría.'));
+    if (!datos.productos.length) principal.append(nodo('p', 'estado', datos.categoria === 'Promociones' ? 'Por ahora no hay productos en promoción.' : 'No hay productos en esta categoría.'));
     datos.productos.forEach((p, i) => principal.append(dibujarProducto(p, i)));
     $('contador').textContent = `${datos.pagina} / ${datos.paginas}`;
     $('anterior').disabled = datos.pagina <= 1;

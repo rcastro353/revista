@@ -1,4 +1,3 @@
-// REVISTA - Actualizacion de diagnostico
 // REVISTA - Cloudflare Pages Function
 // El navegador solo consulta /api/catalog. Google Sheets se consulta desde Cloudflare.
 const MASTER_CSV = 'https://docs.google.com/spreadsheets/d/e/2PACX-1vSfUCCUxmO720CspwHwfs5rkQZ-wk4N4AWYt1tCR0W0tWXy_eATreCAALWt0-dr2JZP4YS_Q-QW56EG/pub?gid=0&single=true&output=csv';
@@ -142,31 +141,24 @@ export async function onRequestGet({ request }) {
     const cliente = clientes.find(c => normalizar(elegir(c, 'slug')) === slug);
     if (!cliente) return json({ error: 'Catálogo no encontrado o desactivado.' }, 404);
 
-
-    
-const [csv, csvConfig] = await Promise.all([
-  obtenerCSV(elegir(cliente, 'catalogocsv'), request)
-    .catch(e => {
-      throw new Error("CATÁLOGO: " + e.message);
-    }),
-
-  obtenerCSV(elegir(cliente, 'confcsv', 'configuracioncsv'), request)
-    .catch(e => {
-      throw new Error("CONFIGURACIÓN: " + e.message);
-    })
-]);
-
+    const [csv, csvConfig] = await Promise.all([
+      obtenerCSV(elegir(cliente, 'catalogocsv'), request)
+        .catch(e => { throw new Error('CATÁLOGO: ' + e.message); }),
+      obtenerCSV(elegir(cliente, 'confcsv', 'configuracioncsv'), request)
+        .catch(e => { throw new Error('CONFIGURACIÓN: ' + e.message); })
+    ]);
     const conf = configuracion(csvFilas(csvConfig));
     const catalogo = csvObjetos(csv).filter(p => elegir(p, 'Nombre del Producto') && elegir(p, 'Categoría'));
     const categorias = [...new Set(catalogo.map(p => elegir(p, 'Categoría')))]
       .sort((a, b) => a.localeCompare(b, 'es'));
-    const hayOfertas = catalogo.some(p => si(elegir(p, 'Promoción')) && precioExiste(elegir(p, 'Precio Descuento')));
+    // Sección visible siempre; toma productos de cualquier categoría.
+    const esPromocion = p => si(elegir(p, 'Promoción')) && precioExiste(elegir(p, 'Precio Descuento'));
 
-    let categoria = params.get('categoria') || (hayOfertas ? 'ofertas' : categorias[0] || '');
+    let categoria = params.get('categoria') || categorias[0] || 'Promociones';
     let filtrados;
-    if (normalizar(categoria) === 'ofertas' && hayOfertas) {
-      categoria = 'Ofertas';
-      filtrados = catalogo.filter(p => si(elegir(p, 'Promoción')) && precioExiste(elegir(p, 'Precio Descuento')));
+    if (['promociones', 'ofertas'].includes(normalizar(categoria))) {
+      categoria = 'Promociones';
+      filtrados = catalogo.filter(esPromocion);
     } else {
       const real = categorias.find(c => normalizar(c) === normalizar(categoria));
       categoria = real || categorias[0] || '';
@@ -178,7 +170,7 @@ const [csv, csvConfig] = await Promise.all([
     const pagina = Math.min(paginas, Math.max(1, Number.isFinite(num) ? num : 1));
     const productos = filtrados.slice((pagina - 1) * POR_PAGINA, pagina * POR_PAGINA)
       .map(p => {
-        const promocion = si(elegir(p, 'Promoción')) && precioExiste(elegir(p, 'Precio Descuento'));
+        const promocion = esPromocion(p);
         return {
           nombre: elegir(p, 'Nombre del Producto'),
           codigo: elegir(p, 'Código'),
@@ -189,7 +181,7 @@ const [csv, csvConfig] = await Promise.all([
       });
     return json({
       cliente: { nombre: elegir(cliente, 'Cliente'), slug: elegir(cliente, 'slug'), ...conf },
-      categorias: [...(hayOfertas ? ['Ofertas'] : []), ...categorias],
+      categorias: ['Promociones', ...categorias.filter(c => normalizar(c) !== 'promociones')],
       categoria, pagina, paginas, total: filtrados.length, productos
     });
   } catch (error) {
