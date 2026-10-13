@@ -53,7 +53,41 @@
     document.documentElement.style.setProperty('--marca', color);
     document.documentElement.style.setProperty('--sobre-marca', colorContraste(color));
     $('tituloMarca').textContent = cliente.nombre || 'REVISTA';
-    $('lema').textContent = 'Catálogo digital';
+    const lema = $('lema');
+    lema.replaceChildren();
+    // Contacto por cliente: el número viene de Configuracion > whatsapp.
+    // El icono se dibuja con SVG local, sin dependencias ni descargas extra.
+    const numeroWhatsApp = String(cliente.whatsapp || '').replace(/\D/g, '');
+    if (/^\d{10,15}$/.test(numeroWhatsApp)) {
+      const enlace = nodo('a', 'enlace-whatsapp');
+      enlace.href = 'https://wa.me/' + numeroWhatsApp;
+      enlace.target = '_blank';
+      enlace.rel = 'noopener noreferrer';
+      const telefonoVisible = /^505\d{8}$/.test(numeroWhatsApp)
+        ? numeroWhatsApp.slice(3, 7) + ' ' + numeroWhatsApp.slice(7)
+        : '+' + numeroWhatsApp;
+      enlace.setAttribute('aria-label', 'Contactar a ' + (cliente.nombre || 'la tienda') + ' por WhatsApp: ' + telefonoVisible);
+      enlace.style.cssText = 'display:inline-flex;align-items:center;justify-content:center;gap:7px;color:#128c4a;font-weight:650;text-decoration:none;font-size:14px;min-height:34px;';
+      const icono = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+      icono.setAttribute('viewBox', '0 0 24 24');
+      icono.setAttribute('width', '19');
+      icono.setAttribute('height', '19');
+      icono.setAttribute('fill', 'none');
+      icono.setAttribute('stroke', 'currentColor');
+      icono.setAttribute('stroke-width', '1.9');
+      icono.setAttribute('stroke-linecap', 'round');
+      icono.setAttribute('stroke-linejoin', 'round');
+      icono.setAttribute('aria-hidden', 'true');
+      const burbuja = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+      burbuja.setAttribute('d', 'M21 11.5a8.5 8.5 0 0 1-12.4 7.55L3 21l1.95-5.6A8.5 8.5 0 1 1 21 11.5Z');
+      const telefono = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+      telefono.setAttribute('d', 'M8.5 8.1c.3-.5.65-.4.9-.35l1.2 1.9c.13.2.12.42-.04.6l-.6.7a7 7 0 0 0 3.1 3.1l.7-.6a.5.5 0 0 1 .6-.04l1.9 1.2c.23.2.3.6-.2.9-.9.6-1.8.5-2.65.15a10.5 10.5 0 0 1-5.05-5.05c-.35-.85-.45-1.75.15-2.65Z');
+      icono.append(burbuja, telefono);
+      enlace.append(icono, document.createTextNode('WhatsApp: ' + telefonoVisible));
+      lema.append(enlace);
+    } else {
+      lema.textContent = 'Catálogo digital';
+    }
     document.title = (cliente.nombre || 'Catálogo') + ' · REVISTA';
     const logo = $('logo');
     if (cliente.logo) {
