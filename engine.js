@@ -108,6 +108,248 @@
     return /^C\$/i.test(t) ? t : 'C$ ' + t.replace(/^\$\s*/, '');
   }
 
+  // Procesamiento local: evita que Cloudflare supere 10 ms de CPU.
+  const REFRESCAR_MS = 30 * 60 * 1000;
+  const RESERVA_MS = 24 * 60 * 60 * 1000;
+  const POR_PAGINA = 50;
+  const PROMOCIONES = '🔥 Promociones';
+  const datosLocales = new Map();
+
+  function normalizar(valor) {
+    return String(valor ?? '').trim().normalize('NFD')
+      .replace(/[\u0300-\u036f]/g, '').toLowerCase().replace(/\s+/g, ' ');
+  }
+  // Misma interpretación de CSV que la función anterior: admite comillas, comas
+  // internas, múltiples líneas dentro de una celda y BOM.
+  function csvFilas(texto) {
+    const filas = [];
+    const input = String(texto).replace(/^\uFEFF/, '');
+    let fila = [], campo = '', entreComillas = false;
+    for (let i = 0; i < input.length; i++) {
+      const c = input[i];
+      if (c === '"') {
+        if (entreComillas && input[i + 1] === '"') { campo += '"'; i++; }
+        else entreComillas = !entreComillas;
+      } else if (c === ',' && !entreComillas) {
+        fila.push(campo); campo = '';
+      } else if ((c === '\n' || c === '\r') && !entreComillas) {
+        if (c === '\r' && input[i + 1] === '\n') i++;
+        fila.push(campo); campo = '';
+        if (fila.some(v => v.trim() !== '')) filas.push(fila);
+        fila = [];
+      } else campo += c;
+    }
+    fila.push(campo);
+    if (fila.some(v => v.trim() !== '')) filas.push(fila);
+    return filas;
+  }
+  function csvObjetos(texto) {
+    const filas = csvFilas(texto);
+    if (!filas.length) return [];
+    const nombres = filas.shift().map(normalizar);
+    return filas.map(fila => Object.fromEntries(
+      nombres.map((nombre, i) => [nombre, String(fila[i] || '').trim()])
+    ));
+  }
+  function elegir(obj, ...claves) {
+    for (const clave of claves) {
+      const valor = obj[normalizar(clave)];
+      if (valor !== undefined && valor !== '') return valor;
+    }
+    return '';
+  }
+  function urlImagen(valor) {
+    const cadena = String(valor || '').trim();
+    try {
+      const u = new URL(cadena);
+      return (u.protocol === 'https:' || u.protocol === 'http:') ? u.href : '';
+    } catch { return ''; }
+  }
+  function formatoColor(valor) {
+    const v = String(valor ?? '').trim().replace(/^#/, '');
+    return /^[a-f0-9]{6}$/i.test(v) || /^[a-f0-9]{3}$/i.test(v) ? '#' + v : '#77b6d4';
+  }
+  function numeroWhatsApp(valor) {
+    const digitos = String(valor ?? '').replace(/\D/g, '');
+    if (/^\d{8}$/.test(digitos)) return '505' + digitos;
+    if (/^\d{10,15}$/.test(digitos)) return digitos;
+    return '';
+  }
+  function configuracion(filas) {
+    const conf = {};
+    for (const fila of filas) {
+      if (fila[0]) conf[normalizar(fila[0])] = String(fila[1] || '').trim();
+    }
+    return {
+      logo: urlImagen(conf['logo web'] || conf.logo),
+      favicon: urlImagen(conf.favicon),
+      color: formatoColor(conf.hex || conf.color || conf['color hex']),
+      whatsapp: numeroWhatsApp(conf.whatsapp || conf['telefono whatsapp'])
+    };
+  }
+  function si(valor) { return ['si', 'sí', 'yes', 'true', '1'].includes(normalizar(valor)); }
+  function precioExiste(valor) {
+    const t = String(valor ?? '').trim();
+    if (!t) return false;
+    const n = Number(t.replace(/[^0-9.,-]/g, '').replace(/,/g, ''));
+    return Number.isFinite(n) && n > 0;
+  }
+  const esPestanaPromociones = valor => {
+    const clave = normalizar(valor).replace(/^🔥\s*/, '');
+    return clave === 'promociones' || clave === 'ofertas';
+  };
+
+  function construirDatos(slug, textoCatalogo, textoConfig, fecha = Date.now()) {
+    if (/^\s*<(?:!doctype|html)/i.test(textoCatalogo)) throw new Error('Google devolvió HTML, no CSV.');
+    const filas = csvFilas(textoCatalogo);
+    const cabeceras = (filas[0] || []).map(normalizar);
+    if (!cabeceras.includes('nombre del producto') || !cabeceras.includes('categoria'))
+      throw new Error('El catálogo no tiene las columnas de producto y categoría.');
+    const productos = csvObjetos(textoCatalogo)
+      .filter(p => elegir(p, 'Nombre del Producto') && elegir(p, 'Categoría'))
+      .map(p => {
+        const categorias = [...new Map(
+          elegir(p, 'Categoría').split(',').map(c => c.trim()).filter(Boolean)
+            .map(c => [normalizar(c), c])
+        ).values()];
+        return {
+          nombre: elegir(p, 'Nombre del Producto'),
+          codigo: elegir(p, 'Código'),
+          precio: elegir(p, 'Precio'),
+          descuento: elegir(p, 'Precio Descuento'),
+          promocion: si(elegir(p, 'Promoción')) && precioExiste(elegir(p, 'Precio Descuento')),
+          categorias, claves: categorias.map(normalizar),
+          fotos: [
+            urlImagen(elegir(p, 'imagen 1 app')) || urlImagen(elegir(p, 'Foto 1')),
+            urlImagen(elegir(p, 'imagen 2 app')),
+            urlImagen(elegir(p, 'imagen 3 app'))
+          ].filter((url, i, todas) => url && todas.indexOf(url) === i)
+        };
+      });
+    const mapaCategorias = new Map();
+    for (const p of productos) {
+      for (const nombre of p.categorias) {
+        const clave = normalizar(nombre);
+        if (!mapaCategorias.has(clave)) mapaCategorias.set(clave, nombre);
+      }
+    }
+    const categorias = [...mapaCategorias.values()]
+      .filter(c => !esPestanaPromociones(c))
+      .sort((a, b) => a.localeCompare(b, 'es'));
+    return {
+      slug, fecha, productos, categorias,
+      conf: configuracion(csvFilas(textoConfig)),
+      aviso: ''
+    };
+  }
+
+  function datosPagina(base, categoriaSolicitada, paginaSolicitada) {
+    let categoria = categoriaSolicitada || base.categorias[0] || PROMOCIONES;
+    let filtrados;
+    if (esPestanaPromociones(categoria)) {
+      categoria = PROMOCIONES;
+      filtrados = base.productos.filter(p => p.promocion);
+    } else {
+      const real = base.categorias.find(c => normalizar(c) === normalizar(categoria));
+      categoria = real || base.categorias[0] || PROMOCIONES;
+      filtrados = base.productos.filter(p => p.claves.includes(normalizar(categoria)));
+    }
+    const paginas = Math.max(1, Math.ceil(filtrados.length / POR_PAGINA));
+    const pagina = Math.min(paginas, Math.max(1, Number.parseInt(paginaSolicitada, 10) || 1));
+    const productos = filtrados.slice((pagina - 1) * POR_PAGINA, pagina * POR_PAGINA)
+      .map(p => ({
+        nombre: p.nombre, codigo: p.codigo, precio: p.precio,
+        precioDescuento: p.promocion ? p.descuento : '',
+        foto: p.fotos[0] || '', fotos: p.fotos
+      }));
+    return {
+      cliente: { nombre: base.nombre || base.slug, slug: base.slug, ...base.conf },
+      categorias: [PROMOCIONES, ...base.categorias],
+      categoria, pagina, paginas, total: filtrados.length, productos
+    };
+  }
+
+  const esperar = ms => new Promise(resolve => setTimeout(resolve, ms));
+  async function solicitar(url, formato = 'text') {
+    for (let intento = 0; intento < 2; intento++) {
+      try {
+        const controlador = new AbortController();
+        const tiempo = setTimeout(() => controlador.abort(), 22000);
+        let resp;
+        try { resp = await fetch(url, { headers: { Accept: formato === 'json' ? 'application/json' : 'text/csv' }, signal: controlador.signal }); }
+        finally { clearTimeout(tiempo); }
+        if (!resp.ok) {
+          const error = new Error('Servidor HTTP ' + resp.status);
+          error.noReintentar = resp.status >= 400 && resp.status < 500;
+          throw error;
+        }
+        const texto = await resp.text();
+        let nombre = '';
+        try { nombre = decodeURIComponent(resp.headers.get('X-Revista-Cliente') || ''); } catch {}
+        return { valor: formato === 'json' ? JSON.parse(texto) : texto,
+          nombre,
+          respaldo: resp.headers.get('X-Revista-Estado') === 'RESPALDO',
+          fechaOrigen: Number(resp.headers.get('X-Revista-Fecha')) || 0 };
+      } catch (error) {
+        if (intento === 1 || error.noReintentar) throw error;
+        await esperar(1100);
+      }
+    }
+  }
+  function almacenamientoClave(slug) { return 'revista-estable-v1:' + slug; }
+  function guardarRespaldo(slug, csv, config, nombre) {
+    try { localStorage.setItem(almacenamientoClave(slug), JSON.stringify({ fecha: Date.now(), csv, config, nombre })); }
+    catch { /* Algunos navegadores bloquean el almacenamiento o tienen poco espacio. */ }
+  }
+  function recuperarRespaldo(slug) {
+    try {
+      const texto = localStorage.getItem(almacenamientoClave(slug));
+      if (!texto) return null;
+      const guardado = JSON.parse(texto);
+      if (!(guardado.fecha > 0) || Date.now() - guardado.fecha > RESERVA_MS) return null;
+      const base = construirDatos(slug, guardado.csv, guardado.config, guardado.fecha);
+      base.nombre = guardado.nombre || slug;
+      return base;
+    } catch { return null; }
+  }
+  async function obtenerDatos(slug) {
+    const existente = datosLocales.get(slug);
+    if (existente && ((Date.now() - existente.fecha < REFRESCAR_MS) ||
+        (existente.proximoIntento && Date.now() < existente.proximoIntento))) return existente;
+    try {
+      const q = encodeURIComponent(slug);
+      const [catalogo, conf] = await Promise.all([
+        solicitar('/api/catalog?cliente=' + q + '&archivo=catalogo'),
+        solicitar('/api/catalog?cliente=' + q + '&archivo=configuracion')
+      ]);
+      const fechaOrigen = Math.min(catalogo.fechaOrigen || Date.now(), conf.fechaOrigen || Date.now());
+      const base = construirDatos(slug, catalogo.valor, conf.valor, fechaOrigen);
+      base.nombre = catalogo.nombre || conf.nombre || slug;
+      // Si alguna fuente viene del respaldo del servidor, se marca como desactualizada.
+      if (catalogo.respaldo || conf.respaldo) {
+        base.aviso = 'Mostrando datos guardados; puede haber cambios recientes sin actualizar.';
+        base.proximoIntento = Date.now() + 2 * 60 * 1000;
+      } else guardarRespaldo(slug, catalogo.valor, conf.valor, base.nombre);
+      datosLocales.set(slug, base);
+      return base;
+    } catch (error) {
+      const respaldo = existente || recuperarRespaldo(slug);
+      if (respaldo) {
+        respaldo.aviso = 'Mostrando la última versión guardada por un problema temporal de conexión.';
+        respaldo.proximoIntento = Date.now() + 2 * 60 * 1000;
+        datosLocales.set(slug, respaldo);
+        return respaldo;
+      }
+      throw error;
+    }
+  }
+
+  function mostrarAviso(aviso) {
+    if (!aviso) return;
+    const p = nodo('p', 'aviso-cache', aviso);
+    principal.prepend(p);
+  }
+
   function categorias(datos) {
     const barra = nodo('div', 'categorias');
     barra.setAttribute('aria-label', 'Categorías');
@@ -233,19 +475,38 @@
     principal.replaceChildren(nodo('p', 'estado', 'Cargando catálogo…'));
     nav.classList.add('oculto');
     try {
-      const q = new URLSearchParams();
-      if (estado.slug) q.set('cliente', estado.slug);
-      if (estado.categoria) q.set('categoria', estado.categoria);
-      q.set('pagina', String(estado.pagina));
-      const resp = await fetch('/api/catalog?' + q, { headers: { Accept: 'application/json' } });
-      const datos = await resp.json();
-      if (!resp.ok) throw new Error(datos.error || 'Error al cargar el catálogo');
+      if (!estado.slug) {
+        try {
+          const respuesta = await solicitar('/api/catalog', 'json');
+          if (!respuesta.valor || !Array.isArray(respuesta.valor.clientes))
+            throw new Error('La lista de clientes no tiene el formato esperado.');
+          try { localStorage.setItem('revista-lista-v1', JSON.stringify({
+            fecha: Date.now(), clientes: respuesta.valor.clientes
+          })); } catch {}
+          if (actual === peticion) renderClientes(respuesta.valor.clientes);
+        } catch (error) {
+          let respaldo = null;
+          try {
+            const guardado = JSON.parse(localStorage.getItem('revista-lista-v1') || 'null');
+            if (guardado && Date.now() - guardado.fecha < RESERVA_MS) respaldo = guardado.clientes;
+          } catch {}
+          if (!respaldo) throw error;
+          if (actual === peticion) {
+            renderClientes(respaldo);
+            mostrarAviso('Lista de catálogos guardada temporalmente: puede estar desactualizada.');
+          }
+        }
+        return;
+      }
+      const base = await obtenerDatos(estado.slug);
       if (actual !== peticion) return;
-      if (datos.clientes) renderClientes(datos.clientes);
-      else renderCatalogo(datos);
-    } catch (err) {
+      renderCatalogo(datosPagina(base, estado.categoria, estado.pagina));
+      mostrarAviso(base.aviso);
+    } catch (error) {
       if (actual !== peticion) return;
-      principal.replaceChildren(nodo('div', 'error', 'No se pudo cargar: ' + err.message));
+      principal.replaceChildren(nodo('div', 'error',
+        'No se pudo cargar el catálogo. ' + (error.message || 'Error de conexión') +
+        '. Volvé a intentarlo en unos momentos.'));
     }
   }
 
