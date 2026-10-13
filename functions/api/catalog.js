@@ -1,233 +1,159 @@
-// REVISTA - Cloudflare Pages Function
-// El navegador solo consulta /api/catalog. Google Sheets se consulta desde Cloudflare.
+// REVISTA - API ESTABLE para Cloudflare Pages Functions (plan gratuito).
+// Cloudflare SOLO lee y retransmite los CSV. El navegador hace los cálculos pesados.
+// No convertir el CSV de productos a objetos aquí: causaba errores de límite de CPU.
 const MASTER_CSV = 'https://docs.google.com/spreadsheets/d/e/2PACX-1vSfUCCUxmO720CspwHwfs5rkQZ-wk4N4AWYt1tCR0W0tWXy_eATreCAALWt0-dr2JZP4YS_Q-QW56EG/pub?gid=0&single=true&output=csv';
-const CACHE_SEGUNDOS = 1800; // 30 minutos
-const POR_PAGINA = 50;
+const ACTUALIZAR_CADA_MS = 30 * 60 * 1000; // Intenta refrescar cada 30 minutos.
+const CONSERVAR_SEGUNDOS = 7 * 24 * 60 * 60; // Respaldo en caché, sujeto a expulsiones de Cloudflare.
 
 function normalizar(valor) {
   return String(valor ?? '').trim().normalize('NFD')
     .replace(/[\u0300-\u036f]/g, '').toLowerCase().replace(/\s+/g, ' ');
 }
+function si(valor) { return ['si', 'sí', 'yes', 'true', '1'].includes(normalizar(valor)); }
 
-// Parser CSV compatible con comas, comillas y saltos de línea dentro de celdas.
+// Solo analiza el CSV maestro, que contiene unas pocas filas.
+// Nunca se ejecuta con el CSV grande de productos.
 function csvFilas(texto) {
   const filas = [];
-  let fila = [], campo = '', entreComillas = false;
   const input = String(texto).replace(/^\uFEFF/, '');
+  let fila = [], campo = '', comillas = false;
   for (let i = 0; i < input.length; i++) {
     const c = input[i];
     if (c === '"') {
-      if (entreComillas && input[i + 1] === '"') { campo += '"'; i++; }
-      else entreComillas = !entreComillas;
-    } else if (c === ',' && !entreComillas) {
-      fila.push(campo); campo = '';
-    } else if ((c === '\n' || c === '\r') && !entreComillas) {
+      if (comillas && input[i + 1] === '"') { campo += '"'; i++; }
+      else comillas = !comillas;
+    } else if (c === ',' && !comillas) { fila.push(campo); campo = ''; }
+    else if ((c === '\n' || c === '\r') && !comillas) {
       if (c === '\r' && input[i + 1] === '\n') i++;
       fila.push(campo); campo = '';
-      if (fila.some(v => v.trim() !== '')) filas.push(fila);
+      if (fila.some(v => v.trim())) filas.push(fila);
       fila = [];
-    } else {
-      campo += c;
-    }
+    } else campo += c;
   }
   fila.push(campo);
-  if (fila.some(v => v.trim() !== '')) filas.push(fila);
+  if (fila.some(v => v.trim())) filas.push(fila);
   return filas;
 }
-
-function csvObjetos(texto) {
+function clientesActivos(texto) {
   const filas = csvFilas(texto);
   if (!filas.length) return [];
-  const nombres = filas.shift().map(normalizar);
-  return filas.map(fila => Object.fromEntries(nombres.map((nombre, i) => [nombre, (fila[i] || '').trim()])));
+  const cabeceras = filas.shift().map(normalizar);
+  const indice = nombre => cabeceras.indexOf(normalizar(nombre));
+  const iActivo = indice('activo'), iSlug = indice('slug');
+  const iNombre = indice('cliente'), iCatalogo = indice('catalogocsv');
+  const iConfig = indice('confcsv');
+  if ([iActivo, iSlug, iNombre, iCatalogo, iConfig].some(i => i < 0))
+    throw new Error('El maestro no tiene las columnas requeridas.');
+  return filas.map(fila => ({
+    nombre: String(fila[iNombre] || '').trim(),
+    slug: String(fila[iSlug] || '').trim(),
+    activo: si(fila[iActivo]),
+    catalogo: String(fila[iCatalogo] || '').trim(),
+    config: String(fila[iConfig] || '').trim()
+  })).filter(c => c.activo && c.slug && c.catalogo && c.config);
 }
-
-function urlGooglePublica(enlace) {
-  const url = new URL(String(enlace ?? '').trim());
-  if (url.protocol !== 'https:' || url.hostname !== 'docs.google.com' ||
-      !/^\/spreadsheets\/d\/e\/[^/]+\/pub$/.test(url.pathname) ||
-      url.searchParams.get('output')?.toLowerCase() !== 'csv') {
-    throw new Error('La dirección del CSV no es una publicación válida de Google Sheets.');
-  }
-  return url.toString();
+function validarCSV(enlace) {
+  const u = new URL(String(enlace || '').trim());
+  if (u.protocol !== 'https:' || u.hostname !== 'docs.google.com' ||
+      !/^\/spreadsheets\/d\/e\/[^/]+\/pub$/.test(u.pathname) ||
+      u.searchParams.get('output')?.toLowerCase() !== 'csv')
+    throw new Error('Enlace de Google Sheets no válido.');
+  return u.href;
 }
-
-async function obtenerCSV(enlace, request) {
-  const url = urlGooglePublica(enlace);
-  // Clave interna de caché por CSV; no se expone a los visitantes.
-  const clave = new Request(new URL('/__revista_cache__?csv=' + encodeURIComponent(url), request.url).toString());
-  const cache = caches.default;
-  let respuesta = await cache.match(clave);
-  if (!respuesta) {
-    const origen = await fetch(url, { headers: { Accept: 'text/csv,text/plain;q=0.9,*/*;q=0.5' } });
-    if (!origen.ok) throw new Error('Google Sheets devolvió HTTP ' + origen.status + '. Comprueba que el CSV se pueda abrir en incógnito.');
-    const texto = await origen.text();
-    // Evita guardar por error una página HTML de inicio de sesión.
-    if (/<html[\s>]/i.test(texto.slice(0, 500))) {
-      throw new Error('Google Sheets devolvió HTML en vez de CSV. Verifica la publicación.');
+function respuestaCliente(resp, estado) {
+  return new Response(resp.body, {
+    status: 200,
+    headers: {
+      'Content-Type': 'text/csv; charset=utf-8',
+      'Cache-Control': 'no-store',
+      'X-Content-Type-Options': 'nosniff',
+      'X-Revista-Estado': estado,
+      'X-Revista-Fecha': resp.headers.get('X-Revista-Fecha') || ''
     }
-    respuesta = new Response(texto, {
-      status: 200,
-      headers: { 'Content-Type': 'text/csv; charset=utf-8', 'Cache-Control': 'public, max-age=' + CACHE_SEGUNDOS }
-    });
-    await cache.put(clave, respuesta.clone());
-  }
-  return respuesta.text();
+  });
 }
 
-function elegir(obj, ...claves) {
-  for (const clave of claves) {
-    const valor = obj[normalizar(clave)];
-    if (valor !== undefined && valor !== '') return valor;
+async function servirCSV(enlace, request, context) {
+  const url = validarCSV(enlace);
+  const clave = new Request(new URL('/__revista_guardado__?url=' + encodeURIComponent(url), request.url).toString());
+  let guardada = null;
+  try { guardada = await caches.default.match(clave); }
+  catch (e) { console.warn('REVISTA: caché no accesible', String(e)); }
+  if (guardada) {
+    const fecha = Number(guardada.headers.get('X-Revista-Fecha'));
+    if (fecha > 0 && Date.now() - fecha < ACTUALIZAR_CADA_MS)
+      return respuestaCliente(guardada, 'CACHE');
   }
-  return '';
-}
 
-function urlImagen(valor) {
-  const cadena = String(valor || '').trim();
   try {
-    const u = new URL(cadena);
-    return (u.protocol === 'https:' || u.protocol === 'http:') ? u.href : '';
-  } catch { return ''; }
-}
+    // I/O remoto y streaming; no se lee ni convierte el CSV de productos en la función.
+    const upstream = await fetch(url, {
+      headers: { Accept: 'text/csv,text/plain;q=0.9,*/*;q=0.5' },
+      signal: AbortSignal.timeout(15000)
+    });
+    if (!upstream.ok) throw new Error('Google Sheets HTTP ' + upstream.status);
+    if ((upstream.headers.get('content-type') || '').toLowerCase().includes('text/html'))
+      throw new Error('Google Sheets respondió HTML en vez de CSV.');
 
-function formatoColor(valor) {
-  const v = String(valor ?? '').trim().replace(/^#/, '');
-  return /^[a-f0-9]{6}$/i.test(v) || /^[a-f0-9]{3}$/i.test(v) ? '#' + v : '#77b6d4';
-}
-
-function numeroWhatsApp(valor) {
-  const digitos = String(valor ?? '').replace(/\D/g, '');
-  if (/^\d{8}$/.test(digitos)) return '505' + digitos;
-  if (/^\d{10,15}$/.test(digitos)) return digitos;
-  return '';
-}
-
-function configuracion(filas) {
-  const conf = {};
-  for (const fila of filas) {
-    if (fila[0]) conf[normalizar(fila[0])] = (fila[1] || '').trim();
+    const nueva = new Response(upstream.body, {
+      status: 200,
+      headers: {
+        'Content-Type': 'text/csv; charset=utf-8',
+        'Cache-Control': 'public, max-age=' + CONSERVAR_SEGUNDOS,
+        'X-Revista-Fecha': String(Date.now())
+      }
+    });
+    // Copia en segundo plano: el visitante no espera a que termine de escribirse.
+    if (context && typeof context.waitUntil === 'function') {
+      context.waitUntil(caches.default.put(clave, nueva.clone()).catch(err => {
+        console.warn('REVISTA: fallo guardando respaldo', String(err));
+      }));
+    }
+    return respuestaCliente(nueva, 'ACTUALIZADO');
+  } catch (error) {
+    // Si Sheets está inaccesible, conservamos la última versión encontrada.
+    if (guardada) {
+      console.warn('REVISTA: usando respaldo', String(error));
+      return respuestaCliente(guardada, 'RESPALDO');
+    }
+    throw error;
   }
-  return {
-    logo: urlImagen(conf['logo web'] || conf['logo']),
-    favicon: urlImagen(conf['favicon']),
-    color: formatoColor(conf['hex'] || conf['color'] || conf['color hex']),
-    // Nicaragua: 8 dígitos locales -> 505 + número; acepta números internacionales.
-    whatsapp: numeroWhatsApp(conf['whatsapp'] || conf['telefono whatsapp'])
-  };
 }
-
-function si(valor) { return ['si', 'sí', 'yes', 'true', '1'].includes(normalizar(valor)); }
-function precioExiste(valor) {
-  const t = String(valor ?? '').trim();
-  if (!t) return false;
-  const n = Number(t.replace(/[^0-9.,-]/g, '').replace(/,/g, ''));
-  return Number.isFinite(n) && n > 0;
-}
-
 function json(datos, status = 200) {
   return new Response(JSON.stringify(datos), {
     status,
     headers: {
       'Content-Type': 'application/json; charset=utf-8',
-      'Cache-Control': 'public, max-age=30',
+      'Cache-Control': 'no-store',
       'X-Content-Type-Options': 'nosniff'
     }
   });
 }
 
-export async function onRequestGet({ request }) {
+export async function onRequestGet({ request, context }) {
   try {
     const params = new URL(request.url).searchParams;
-    const clientes = csvObjetos(await obtenerCSV(MASTER_CSV, request))
-      .filter(c => si(elegir(c, 'activo')) && elegir(c, 'slug') && elegir(c, 'catalogocsv') && elegir(c, 'confcsv'));
+    const archivo = params.get('archivo') || '';
     const slug = normalizar(params.get('cliente') || '');
-    if (!slug) {
-      return json({ clientes: clientes.map(c => ({
-        nombre: elegir(c, 'cliente'), slug: elegir(c, 'slug')
-      })) });
+    if (archivo && archivo !== 'catalogo' && archivo !== 'configuracion')
+      return json({ error: 'Archivo solicitado no válido.' }, 400);
+
+    const master = await servirCSV(MASTER_CSV, request, context);
+    const clientes = clientesActivos(await master.text());
+    if (!slug && !archivo) {
+      return json({ clientes: clientes.map(c => ({ nombre: c.nombre, slug: c.slug })) });
     }
-    const cliente = clientes.find(c => normalizar(elegir(c, 'slug')) === slug);
+    if (!slug) return json({ error: 'Falta el identificador del cliente.' }, 400);
+    const cliente = clientes.find(c => normalizar(c.slug) === slug);
     if (!cliente) return json({ error: 'Catálogo no encontrado o desactivado.' }, 404);
-
-    const [csv, csvConfig] = await Promise.all([
-      obtenerCSV(elegir(cliente, 'catalogocsv'), request)
-        .catch(e => {
-          throw new Error("CATÁLOGO: " + e.message);
-        }),
-      obtenerCSV(elegir(cliente, 'confcsv', 'configuracioncsv'), request)
-        .catch(e => {
-          throw new Error("CONFIGURACIÓN: " + e.message);
-        })
-    ]);
-    const conf = configuracion(csvFilas(csvConfig));
-    const catalogo = csvObjetos(csv).filter(p => elegir(p, 'Nombre del Producto') && elegir(p, 'Categoría'));
-    // AppSheet EnumList guarda categorías separadas por comas. Sigue aceptando una sola.
-    // Una categoría repetida dentro del mismo producto cuenta solo una vez.
-    function categoriasProducto(producto) {
-      const valores = elegir(producto, 'Categoría').split(',').map(c => c.trim()).filter(Boolean);
-      return [...new Map(valores.map(c => [normalizar(c), c])).values()];
-    }
-    const mapaCategorias = new Map();
-    for (const producto of catalogo) {
-      for (const nombre of categoriasProducto(producto)) {
-        const clave = normalizar(nombre);
-        if (!mapaCategorias.has(clave)) mapaCategorias.set(clave, nombre);
-      }
-    }
-    const categorias = [...mapaCategorias.values()].sort((a, b) => a.localeCompare(b, 'es'));
-    // PROMOCIONES no depende de la columna Categoría: es una sección independiente.
-    // El acceso permanece visible aun cuando todavía no haya productos en descuento.
-    const ETIQUETA_PROMOCIONES = '🔥 Promociones';
-    const esPromocion = producto => si(elegir(producto, 'Promoción')) &&
-      precioExiste(elegir(producto, 'Precio Descuento'));
-    const esPestanaPromociones = valor => {
-      const clave = normalizar(valor).replace(/^🔥\s*/, '');
-      return clave === 'promociones' || clave === 'ofertas';
-    };
-    // No confundir una categoría de AppSheet llamada "Promociones" con la sección especial.
-    const categoriasVisibles = categorias.filter(c => !esPestanaPromociones(c));
-
-    let categoria = params.get('categoria') || categoriasVisibles[0] || ETIQUETA_PROMOCIONES;
-    let filtrados;
-    if (esPestanaPromociones(categoria)) {
-      categoria = ETIQUETA_PROMOCIONES;
-      filtrados = catalogo.filter(esPromocion);
-    } else {
-      const real = categoriasVisibles.find(c => normalizar(c) === normalizar(categoria));
-      categoria = real || categoriasVisibles[0] || ETIQUETA_PROMOCIONES;
-      filtrados = catalogo.filter(p => categoriasProducto(p).some(c => normalizar(c) === normalizar(categoria)));
-    }
-
-    const paginas = Math.max(1, Math.ceil(filtrados.length / POR_PAGINA));
-    const num = Number.parseInt(params.get('pagina'), 10);
-    const pagina = Math.min(paginas, Math.max(1, Number.isFinite(num) ? num : 1));
-    const productos = filtrados.slice((pagina - 1) * POR_PAGINA, pagina * POR_PAGINA)
-      .map(p => {
-        const promocion = esPromocion(p);
-        // Solo URLs reales: las rutas internas Foto 2 / Foto 3 de AppSheet
-        // no son enlaces públicos, pero 'imagen 2 app' y 'imagen 3 app' sí.
-        const fotos = [
-          urlImagen(elegir(p, 'imagen 1 app')) || urlImagen(elegir(p, 'Foto 1')),
-          urlImagen(elegir(p, 'imagen 2 app')),
-          urlImagen(elegir(p, 'imagen 3 app'))
-        ].filter((url, i, todas) => url && todas.indexOf(url) === i);
-        return {
-          nombre: elegir(p, 'Nombre del Producto'),
-          codigo: elegir(p, 'Código'),
-          precio: elegir(p, 'Precio'),
-          precioDescuento: promocion ? elegir(p, 'Precio Descuento') : '',
-          foto: fotos[0] || '', // compatibilidad con el motor anterior
-          fotos
-        };
-      });
-    return json({
-      cliente: { nombre: elegir(cliente, 'Cliente'), slug: elegir(cliente, 'slug'), ...conf },
-      categorias: [ETIQUETA_PROMOCIONES, ...categoriasVisibles],
-      categoria, pagina, paginas, total: filtrados.length, productos
-    });
+    if (!archivo) return json({
+      error: 'Versión antigua del navegador. Recargá la página para actualizar REVISTA.'
+    }, 409);
+    const salida = await servirCSV(archivo === 'catalogo' ? cliente.catalogo : cliente.config, request, context);
+    salida.headers.set('X-Revista-Cliente', encodeURIComponent(cliente.nombre));
+    return salida;
   } catch (error) {
-    console.error('REVISTA', error);
-    return json({ error: 'No se pudieron leer los CSV. ' + (error?.message || 'Error desconocido') }, 502);
+    console.error('REVISTA: fallo leyendo fuente', String(error));
+    return json({ error: 'No se pudieron cargar los datos. Intentá de nuevo.' }, 502);
   }
 }
