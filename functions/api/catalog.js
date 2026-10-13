@@ -96,6 +96,13 @@ function formatoColor(valor) {
   return /^[a-f0-9]{6}$/i.test(v) || /^[a-f0-9]{3}$/i.test(v) ? '#' + v : '#77b6d4';
 }
 
+function numeroWhatsApp(valor) {
+  const digitos = String(valor ?? '').replace(/\D/g, '');
+  if (/^\d{8}$/.test(digitos)) return '505' + digitos;
+  if (/^\d{10,15}$/.test(digitos)) return digitos;
+  return '';
+}
+
 function configuracion(filas) {
   const conf = {};
   for (const fila of filas) {
@@ -104,7 +111,9 @@ function configuracion(filas) {
   return {
     logo: urlImagen(conf['logo web'] || conf['logo']),
     favicon: urlImagen(conf['favicon']),
-    color: formatoColor(conf['hex'] || conf['color'] || conf['color hex'])
+    color: formatoColor(conf['hex'] || conf['color'] || conf['color hex']),
+    // Nicaragua: 8 dígitos locales -> 505 + número; acepta números internacionales.
+    whatsapp: numeroWhatsApp(conf['whatsapp'] || conf['telefono whatsapp'])
   };
 }
 
