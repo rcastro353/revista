@@ -196,12 +196,20 @@ export async function onRequestGet({ request }) {
     const productos = filtrados.slice((pagina - 1) * POR_PAGINA, pagina * POR_PAGINA)
       .map(p => {
         const promocion = esPromocion(p);
+        // Solo URLs reales: las rutas internas Foto 2 / Foto 3 de AppSheet
+        // no son enlaces públicos, pero 'imagen 2 app' y 'imagen 3 app' sí.
+        const fotos = [
+          urlImagen(elegir(p, 'imagen 1 app')) || urlImagen(elegir(p, 'Foto 1')),
+          urlImagen(elegir(p, 'imagen 2 app')),
+          urlImagen(elegir(p, 'imagen 3 app'))
+        ].filter((url, i, todas) => url && todas.indexOf(url) === i);
         return {
           nombre: elegir(p, 'Nombre del Producto'),
           codigo: elegir(p, 'Código'),
           precio: elegir(p, 'Precio'),
           precioDescuento: promocion ? elegir(p, 'Precio Descuento') : '',
-          foto: urlImagen(elegir(p, 'imagen 1 app')) || urlImagen(elegir(p, 'Foto 1'))
+          foto: fotos[0] || '', // compatibilidad con el motor anterior
+          fotos
         };
       });
     return json({
