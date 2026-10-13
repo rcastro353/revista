@@ -165,10 +165,16 @@
     principal.replaceChildren(categorias(datos), encabezado);
     if (!datos.productos.length) principal.append(nodo('p', 'estado', datos.categoria === 'Promociones' ? 'Por ahora no hay productos en promoción.' : 'No hay productos en esta categoría.'));
     datos.productos.forEach((p, i) => principal.append(dibujarProducto(p, i)));
-    $('contador').textContent = `${datos.pagina} / ${datos.paginas}`;
-    $('anterior').disabled = datos.pagina <= 1;
-    $('siguiente').disabled = datos.pagina >= datos.paginas;
-    nav.classList.remove('oculto');
+    // La barra solo se muestra si existen al menos dos páginas (51+ productos).
+    // En los extremos, ocultamos el botón que no tiene destino.
+    const paginas = Number(datos.paginas) || 1;
+    const pagina = Number(datos.pagina) || 1;
+    $('contador').textContent = `${pagina} / ${paginas}`;
+    $('anterior').disabled = pagina <= 1;
+    $('siguiente').disabled = pagina >= paginas;
+    $('anterior').classList.toggle('oculto', pagina <= 1);
+    $('siguiente').classList.toggle('oculto', pagina >= paginas);
+    nav.classList.toggle('oculto', paginas <= 1);
   }
 
   function renderClientes(clientes) {
