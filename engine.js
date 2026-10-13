@@ -90,18 +90,63 @@
   function dibujarProducto(producto, indice) {
     const articulo = nodo('article', 'producto');
     articulo.append(nodo('h2', 'nombre', producto.nombre));
-    if (producto.foto) {
+    // Una sola imagen grande por producto. Foto 2 y Foto 3 NO se descargan
+    // hasta que el visitante toque una flecha o deslice horizontalmente.
+    const fotos = [...new Set((Array.isArray(producto.fotos) && producto.fotos.length
+      ? producto.fotos : [producto.foto]).filter(Boolean))];
+    if (fotos.length) {
       const imagen = nodo('img', 'foto');
-      imagen.src = producto.foto;
+      imagen.src = fotos[0];
       imagen.alt = producto.nombre;
       imagen.decoding = 'async';
       imagen.loading = indice === 0 ? 'eager' : 'lazy';
       if (indice === 0) imagen.setAttribute('fetchpriority', 'high');
-      imagen.onerror = () => {
-        const falta = nodo('div', 'sin-foto', 'Fotografía no disponible');
-        imagen.replaceWith(falta);
-      };
-      articulo.append(imagen);
+
+      if (fotos.length === 1) {
+        imagen.onerror = () => imagen.replaceWith(nodo('div', 'sin-foto', 'Fotografía no disponible'));
+        articulo.append(imagen);
+      } else {
+        const galeria = nodo('div', 'galeria-foto');
+        let actual = 0;
+        imagen.alt = `${producto.nombre}, foto 1 de ${fotos.length}`;
+        const izquierda = nodo('button', 'flecha-foto flecha-izquierda', '‹');
+        const derecha = nodo('button', 'flecha-foto flecha-derecha', '›');
+        izquierda.type = derecha.type = 'button';
+        izquierda.setAttribute('aria-label', 'Ver fotografía anterior');
+        derecha.setAttribute('aria-label', 'Ver fotografía siguiente');
+        izquierda.classList.add('oculto');
+        imagen.onerror = () => galeria.classList.add('foto-fallida');
+
+        function mostrarFoto(n) {
+          if (n < 0 || n >= fotos.length || n === actual) return;
+          actual = n;
+          galeria.classList.remove('foto-fallida');
+          // Cambiar src aquí evita la descarga anticipada de las otras fotos.
+          imagen.src = fotos[actual];
+          imagen.alt = `${producto.nombre}, foto ${actual + 1} de ${fotos.length}`;
+          izquierda.classList.toggle('oculto', actual === 0);
+          derecha.classList.toggle('oculto', actual === fotos.length - 1);
+        }
+        izquierda.addEventListener('click', () => mostrarFoto(actual - 1));
+        derecha.addEventListener('click', () => mostrarFoto(actual + 1));
+        let inicio = null;
+        galeria.addEventListener('touchstart', e => {
+          if (e.touches.length !== 1) return;
+          inicio = { x: e.touches[0].clientX, y: e.touches[0].clientY };
+        }, { passive: true });
+        galeria.addEventListener('touchend', e => {
+          if (!inicio || !e.changedTouches.length) return;
+          const dx = e.changedTouches[0].clientX - inicio.x;
+          const dy = e.changedTouches[0].clientY - inicio.y;
+          inicio = null;
+          // Ignora el desplazamiento vertical normal de la revista.
+          if (Math.abs(dx) < 45 || Math.abs(dx) <= Math.abs(dy) * 1.4) return;
+          mostrarFoto(actual + (dx < 0 ? 1 : -1));
+        }, { passive: true });
+        galeria.addEventListener('touchcancel', () => { inicio = null; }, { passive: true });
+        galeria.append(imagen, izquierda, derecha);
+        articulo.append(galeria);
+      }
     } else articulo.append(nodo('div', 'sin-foto', 'Fotografía no disponible'));
     if (producto.precioDescuento) {
       articulo.append(nodo('p', 'precio-anterior', dinero(producto.precio)));

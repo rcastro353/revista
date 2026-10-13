@@ -28,6 +28,14 @@ button { font: inherit; cursor: pointer; }
 .producto { margin: 15px auto 22px; max-width: var(--ancho); background: #fff; padding: 16px 10px 22px; text-align: center; border-radius: 7px; content-visibility: auto; contain-intrinsic-size: auto 640px; }
 .nombre { margin: 0 4px 14px; font-size: clamp(19px, 5vw, 26px); font-weight: 750; overflow-wrap: anywhere; }
 .foto { display: block; width: 100%; height: auto; max-height: 85svh; object-fit: contain; margin: auto; background: #fafafa; }
+/* Carrusel de fotos: conserva la misma foto grande, sin miniaturas. */
+.galeria-foto { position: relative; width: 100%; touch-action: pan-y; }
+.flecha-foto { position: absolute; top: 50%; transform: translateY(-50%); z-index: 1; display: grid; place-items: center; width: 42px; height: 42px; padding: 0; border: 0; border-radius: 50%; background: rgba(0,0,0,.30); color: #fff; opacity: .58; font: 38px/1 Arial, sans-serif; cursor: pointer; }
+.flecha-izquierda { left: 6px; }
+.flecha-derecha { right: 6px; }
+.flecha-foto:hover, .flecha-foto:focus-visible { opacity: .95; }
+.flecha-foto:focus-visible { outline: 2px solid var(--marca); outline-offset: 3px; }
+.galeria-foto.foto-fallida::after { content: 'Fotografía no disponible'; position: absolute; inset: 0; display: grid; place-items: center; color: #777; background: #f6f6f6; pointer-events: none; }
 .sin-foto { display: grid; min-height: 180px; place-items: center; color: #777; background: #f6f6f6; }
 .precio { font-size: clamp(25px, 6vw, 33px); font-weight: 800; margin: 15px 0 0; }
 .precio-anterior { color: #777; font-size: 19px; text-decoration: line-through; margin: 14px 0 2px; }
